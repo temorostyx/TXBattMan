@@ -25,8 +25,8 @@ SOFTWARE.
 ]]
 
 -- declarations
-local appName, appVersion, appAuthor = "TXBattMan", "1.0", "Morote"
-local voltage, capacity, capacity_relative, capacity_used, capacity_nominal, current, current_smoothed, current_table, current_table_length_max = 0, 0, 0, 0, 9999,0, 0, {}, 100
+local appName, appVersion, appAuthor = "TXBattMan", "1.1", "Morote"
+local voltage, capacity, capacity_relative, capacity_used, capacity_nominal, current, current_smoothed, startup_counter = 0, 0, 0, 0, 9999, 0, 0, 100
 local runtime_remaining, runtime_remaining_h, runtime_remaining_min, runtime_remaining_min_string, runtime_remaining_string = 0, 0, 0, "", ""
 local alarm_audio, alarm_vibrate, audio_switch, audio_switch_state, temp,data, alarm_state, alarm_threshold, value, componentIndex, config, file, json_table, json_text, locale, dic, font_size, pos_x, pos_y
 local audio_triggered, settings_changed = false, false
@@ -87,21 +87,6 @@ local function keyPressed(key)
 	elseif (key == KEY_2 and formID ~= 2) then	-- go to settings page
 		form.reinit(2)
 	end
-end
-
--- adds value to table and removes surplus elements from the beginning if number of elements > n_max
-local function handle_table(t, value, n_max)
-	table.insert(t, value)
-	while #t > n_max do temp = table.remove(t, 1) end
-end
-
--- returns median of a table
-local function mean_of_table(t)
-	temp = {} -- deep copy original table so that it is not changed when sorting
-	for k, v in pairs(t) do table.insert(temp, v) end
-	table.sort(temp)
-	if math.fmod(#temp, 2) == 0 then return (temp[#temp / 2] + temp[(#temp / 2) +1]) / 2 -- return mean value of middle two elements
-	else return temp[math.ceil(#temp / 2)] end	-- return middle element
 end
 
 -- returns a number rounded to a defined amount of decimals
@@ -233,32 +218,32 @@ local function loop()
 	voltage = data.txVoltage -- in V
 	capacity_relative = data.txBattPercent -- in %
 	current = data.txCurrent -- in mA
-	--current = current - 500 -- for testing & debugging with the emulator [state "charging"]
-	--current = current + 500 -- for testing & debugging with the emulator [state "draining battery"]
+	-- current = current - 500 -- for testing & debugging with the emulator [state "charging"]
+	-- current = current + 500 -- for testing & debugging with the emulator [state "draining battery"]
 	capacity = capacity_nominal * (capacity_relative / 100) -- in mAh
-	
-	handle_table(current_table, current, current_table_length_max) -- add actual current readout to table and remove surplus elements if necessary
-	
-	current_smoothed = mean_of_table(current_table)	-- get smoothed current as median of current_table
-	
-	if current_smoothed == 0 then runtime_remaining_string = "--:--"
-	elseif current_smoothed < 0 then runtime_remaining_string = dic[locale]["charge"]
-	else
-	  runtime_remaining = capacity / current_smoothed -- in h
-	  runtime_remaining_h = math.floor(capacity / current_smoothed) -- in h
-	  runtime_remaining_min = math.floor(((runtime_remaining - runtime_remaining_h) * 60) / 1) -- in min
-  
-	  if runtime_remaining_min < 10 then runtime_remaining_min_string = "0" .. tostring(runtime_remaining_min)
-	  else runtime_remaining_min_string = tostring(runtime_remaining_min) end
-  
-	  runtime_remaining_string = tostring(runtime_remaining_h) .. ":" .. runtime_remaining_min_string .. " h"
+	current_smoothed = current_smoothed * 0.95 + 0.05 * current 
+	if startup_counter > 0 then startup_counter = startup_counter - 1 end
 
-	  if string.len(runtime_remaining_string) > 8 then runtime_remaining_string = dic[locale]["eternal"]
-	  elseif #current_table < current_table_length_max then runtime_remaining_string = dic[locale]["starting"] end
+	if current_smoothed == 0 then runtime_remaining_string = "--:--" -- no current
+	
+	elseif startup_counter > 0 then runtime_remaining_string = dic[locale]["starting"] -- swing-in phase
+	
+	elseif current_smoothed < 0 then runtime_remaining_string = dic[locale]["charge"] -- charging battery
+		
+	else -- draining battery
+		runtime_remaining = capacity / current_smoothed -- in h
+	  	runtime_remaining_h = math.floor(capacity / current_smoothed) -- in h
+	  	runtime_remaining_min = math.floor(((runtime_remaining - runtime_remaining_h) * 60) / 1) -- in min
+  
+		if runtime_remaining_min < 10 then runtime_remaining_min_string = "0" .. tostring(runtime_remaining_min)
+		else runtime_remaining_min_string = tostring(runtime_remaining_min) end
+  
+		runtime_remaining_string = tostring(runtime_remaining_h) .. ":" .. runtime_remaining_min_string .. " h"
 
+		if string.len(runtime_remaining_string) > 8 then runtime_remaining_string = dic[locale]["eternal"] end
 	end
 
-	if (alarm_threshold > 0 and alarm_state == 0 and current_smoothed > 0) then -- check if preconditions met (alarm enabled and not yet triggered while TX draining battery)
+	if (alarm_threshold > 0 and alarm_state == 0 and current_smoothed > 0 and startup_counter <= 0) then -- check if preconditions met (alarm enabled and not yet triggered while TX draining battery)
 			if runtime_remaining < (alarm_threshold / 60) then -- check if remaining runtime below threshold 
 				alarm_state = 1
 				print_alarm_dialogue()
@@ -275,7 +260,9 @@ local function loop()
 			system.playNumber(runtime_remaining_min, 0, "min")
 			audio_triggered = true
 		end
-	else audio_triggered = false end
+	else audio_triggered = false
+	end
+
 end
 
 -- return
