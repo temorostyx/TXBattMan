@@ -1,5 +1,5 @@
 --[[
-TXBattMan lua app for Jeti DS-12, DC-16 II, DS/DC-24 transmitters
+TXBattMan lua app for Jeti DS-12, DS/DC-16 II, DS/DC-24 transmitters
 
 MIT License
 
@@ -25,11 +25,12 @@ SOFTWARE.
 ]]
 
 -- declarations
-local appName, appVersion, appAuthor = "TXBattMan", "1.1", "Morote"
-local voltage, capacity, capacity_relative, capacity_used, capacity_nominal, current, current_smoothed, startup_counter = 0, 0, 0, 0, 9999, 0, 0, 100
+local appName, appVersion, appAuthor = "TXBattMan", "1.2", "Morote"
+local voltage, capacity, capacity_relative, capacity_used, capacity_nominal, current, startup_counter = 0, 0, 0, 0, 9999, 0, 100
 local runtime_remaining, runtime_remaining_h, runtime_remaining_min, runtime_remaining_min_string, runtime_remaining_string = 0, 0, 0, "", ""
 local alarm_audio, alarm_vibrate, audio_switch, audio_switch_state, temp,data, alarm_state, alarm_threshold, value, componentIndex, config, file, json_table, json_text, locale, dic, font_size, pos_x, pos_y
 local audio_triggered, settings_changed = false, false
+local current_avg1, current_avg0, avg_n0, avg_n1 = 0, 0, 1, 1
 
 -- read translations
 local function get_translations()
@@ -165,7 +166,7 @@ local function draw_status_page()
 	form.addLabel({label = dic[locale]["actual_values"], font = FONT_BOLD})
 	form.addLabel({label = dic[locale]["capacity"] .. tostring((math.floor(capacity))) .. " mAh" .. " (" .. tostring(capacity_relative) .. " %)"})
 	form.addLabel({label = tostring(voltage) .. " V @ " .. tostring(current) .. " mA"})
-	if current_smoothed < 0 then form.addLabel({label = dic[locale]["charging"], font = FONT_BOLD})
+	if current_avg1 < 0 then form.addLabel({label = dic[locale]["charging"], font = FONT_BOLD})
 	else form.addLabel({label = dic[locale]["estimated_remaining_runtime"] .. runtime_remaining_string, font = FONT_BOLD}) end
 end
 
@@ -217,22 +218,26 @@ local function loop()
 	data = system.getTxTelemetry() -- get TX battery status
 	voltage = data.txVoltage -- in V
 	capacity_relative = data.txBattPercent -- in %
+	capacity = capacity_nominal * (capacity_relative / 100) -- in mAh
 	current = data.txCurrent -- in mA
 	-- current = current - 500 -- for testing & debugging with the emulator [state "charging"]
-	-- current = current + 500 -- for testing & debugging with the emulator [state "draining battery"]
-	capacity = capacity_nominal * (capacity_relative / 100) -- in mAh
-	current_smoothed = current_smoothed * 0.95 + 0.05 * current 
+	--current = current + 500 -- for testing & debugging with the emulator [state "draining battery"]
+	current_avg1 = (current_avg0 * (avg_n0 / avg_n1)) + (current / avg_n1)
+    avg_n0 = avg_n1
+    avg_n1 = avg_n1 + 1
+    current_avg0 = current_avg1
+
 	if startup_counter > 0 then startup_counter = startup_counter - 1 end
 
-	if current_smoothed == 0 then runtime_remaining_string = "--:--" -- no current
+	if current_avg1 == 0 then runtime_remaining_string = "--:--" -- no current
 	
 	elseif startup_counter > 0 then runtime_remaining_string = dic[locale]["starting"] -- swing-in phase
 	
-	elseif current_smoothed < 0 then runtime_remaining_string = dic[locale]["charge"] -- charging battery
+	elseif current_avg1 < 0 then runtime_remaining_string = dic[locale]["charge"] -- charging battery
 		
 	else -- draining battery
-		runtime_remaining = capacity / current_smoothed -- in h
-	  	runtime_remaining_h = math.floor(capacity / current_smoothed) -- in h
+		runtime_remaining = capacity / current_avg1 -- in h
+	  	runtime_remaining_h = math.floor(capacity / current_avg1) -- in h
 	  	runtime_remaining_min = math.floor(((runtime_remaining - runtime_remaining_h) * 60) / 1) -- in min
   
 		if runtime_remaining_min < 10 then runtime_remaining_min_string = "0" .. tostring(runtime_remaining_min)
@@ -243,7 +248,7 @@ local function loop()
 		if string.len(runtime_remaining_string) > 8 then runtime_remaining_string = dic[locale]["eternal"] end
 	end
 
-	if (alarm_threshold > 0 and alarm_state == 0 and current_smoothed > 0 and startup_counter <= 0) then -- check if preconditions met (alarm enabled and not yet triggered while TX draining battery)
+	if (alarm_threshold > 0 and alarm_state == 0 and current_avg1 > 0 and startup_counter <= 0) then -- check if preconditions met (alarm enabled and not yet triggered while TX draining battery)
 			if runtime_remaining < (alarm_threshold / 60) then -- check if remaining runtime below threshold 
 				alarm_state = 1
 				print_alarm_dialogue()
@@ -255,7 +260,7 @@ local function loop()
 	audio_switch_state = get_switch_state(audio_switch)
 	
 	if audio_switch_state == 1 then
-		if (audio_triggered == false and current_smoothed > 0) then
+		if (audio_triggered == false and current_avg1 > 0) then
 			system.playNumber(runtime_remaining_h, 0, "h")
 			system.playNumber(runtime_remaining_min, 0, "min")
 			audio_triggered = true
