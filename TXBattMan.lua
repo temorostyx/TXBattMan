@@ -25,7 +25,7 @@ SOFTWARE.
 ]]
 
 -- declarations
-local appName, appVersion, appAuthor = "TXBattMan", "1.2", "Morote"
+local appName, appVersion, appAuthor = "TXBattMan", "1.21", "Morote"
 local voltage, capacity, capacity_relative, capacity_used, capacity_nominal, current, startup_counter = 0, 0, 0, 0, 9999, 0, 100
 local runtime_remaining, runtime_remaining_h, runtime_remaining_min, runtime_remaining_min_string, runtime_remaining_string = 0, 0, 0, "", ""
 local alarm_audio, alarm_vibrate, audio_switch, audio_switch_state, temp,data, alarm_state, alarm_threshold, value, componentIndex, config, file, json_table, json_text, locale, dic, font_size, pos_x, pos_y
@@ -221,10 +221,14 @@ local function loop()
 	capacity = capacity_nominal * (capacity_relative / 100) -- in mAh
 	current = data.txCurrent -- in mA
 	-- current = current - 500 -- for testing & debugging with the emulator [state "charging"]
-	--current = current + 500 -- for testing & debugging with the emulator [state "draining battery"]
+	-- current = current + 500 -- for testing & debugging with the emulator [state "draining battery"]
 	current_avg1 = (current_avg0 * (avg_n0 / avg_n1)) + (current / avg_n1)
-    avg_n0 = avg_n1
-    avg_n1 = avg_n1 + 1
+    
+	if avg_n0 < 250 then
+		avg_n0 = avg_n1
+    	avg_n1 = avg_n1 + 1
+	end
+
     current_avg0 = current_avg1
 
 	if startup_counter > 0 then startup_counter = startup_counter - 1 end
